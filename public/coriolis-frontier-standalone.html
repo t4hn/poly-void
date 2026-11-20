@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coriolis Frontier — Low-Poly 3D Space Flight &amp; Trading</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --panel: rgba(9, 13, 22, 0.78);
+      --border: rgba(56, 189, 248, 0.28);
+      --cyan: #38bdf8;
+      --amber: #fbbf24;
+      --emerald: #34d399;
+      --rose: #f87171;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; user-select: none; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+    #viewport { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    .hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+    .hidden { display: none !important; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+    }
+    button {
+      font-family: inherit; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(9, 13, 22, 0.85); color: var(--text);
+      padding: 6px 10px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    button:hover { border-color: var(--cyan); }
+    button.primary {
+      background: var(--cyan); color: #050811; border-color: #bae6fd; font-weight: 700;
+      padding: 12px 28px; font-size: 13px; letter-spacing: 0.18em;
+    }
+    button.primary:hover { background: #7dd3fc; }
+    #title-overlay {
+      position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+      justify-content: space-between; padding: 48px; pointer-events: none;
+    }
+    #title-overlay .actions, #title-overlay button { pointer-events: auto; }
+    .top-left { position: fixed; top: 16px; left: 16px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+    .top-right { position: fixed; top: 16px; right: 16px; width: 256px; }
+    .bottom-center { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); text-align: center; }
+    .bottom-left { position: fixed; bottom: 16px; left: 16px; pointer-events: auto; }
+    .reticle { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+    #dock-modal {
+      position: fixed; inset: 0; z-index: 30; background: rgba(5, 8, 17, 0.85);
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-card {
+      width: 100%; max-width: 780px; background: #0b1220; border: 1px solid rgba(56, 189, 248, 0.4);
+      padding: 24px;
+    }
+    .market-row {
+      display: grid; grid-template-columns: 2fr 1fr 1fr 1.6fr; gap: 8px;
+      align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      font-size: 13px;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.174.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <div id="title-overlay">
+    <div class="mono" style="font-size: 11px; letter-spacing: 0.24em; color: rgba(125,211,252,0.8)">
+      SECTOR 04 // LAVE CORRIDOR
+    </div>
+    <div style="max-width: 460px;">
+      <div class="mono" style="font-size: 36px; font-weight: 700; letter-spacing: 4px;">CORIOLIS</div>
+      <div class="mono" style="font-size: 15px; letter-spacing: 8px; color: var(--cyan); margin-bottom: 18px;">FRONTIER</div>
+      <p style="font-size: 14px; line-height: 1.55; color: #cbd5e1; margin-bottom: 24px;">
+        Pilot an orbital interceptor across low-poly deep space, fracture ore-bearing asteroids, and dock inside the rotating Coriolis hub for station trade.
+      </p>
+      <div class="actions" style="display: flex; gap: 12px;">
+        <button id="btn-launch" class="primary">Launch</button>
+        <button id="btn-title-invert" class="mono">Pitch: Standard</button>
+      </div>
+    </div>
+    <div class="mono" style="font-size: 11px; letter-spacing: 0.12em; color: var(--muted);">
+      W/S Pitch · A/D Roll · Q/E Yaw · Shift/Ctrl Throttle · Space Fire · F Dock
+    </div>
+  </div>
+
+  <div id="hud" class="hud hidden">
+    <div class="top-left">
+      <div class="panel mono" style="display:flex; gap:18px; align-items:center;">
+        <div>
+          <div style="font-size:10px; color:var(--muted);">CREDITS</div>
+          <div id="hud-credits" style="font-size:16px; font-weight:700; color:var(--amber);">1,500 CR</div>
+        </div>
+        <div>
+          <div style="font-size:10px; color:var(--muted);">CARGO</div>
+          <div id="hud-cargo" style="font-size:16px; font-weight:700;">4/20 t</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="btn-invert" class="mono">Inv Pitch [I]: OFF</button>
+        <button id="btn-cam" class="mono">Cam [C]: Cockpit</button>
+      </div>
+    </div>
+
+    <div class="top-right panel mono">
+      <div style="font-size:10px; letter-spacing:0.18em; color:var(--cyan);">TARGET LOCK</div>
+      <div id="hud-target-name" style="font-size:13px; font-weight:700; margin-top:4px;">CORIOLIS PRIME</div>
+      <div style="display:flex; justify-content:space-between; margin-top:6px; font-size:12px;">
+        <span style="color:var(--muted);">RANGE</span>
+        <span id="hud-target-dist" style="color:var(--cyan); font-weight:700;">760 m</span>
+      </div>
+      <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(148,163,184,0.2);">
+        <div id="hud-dock-status" style="font-size:11px; color:#7dd3fc;">APPROACH CORRIDOR OPEN</div>
+      </div>
+    </div>
+
+    <div class="reticle">
+      <svg viewBox="0 0 240 200" width="240" height="200">
+        <path id="arc-thr-bg" d="" fill="none" stroke="rgba(148,163,184,0.2)" stroke-width="4" />
+        <path id="arc-thr" d="" fill="none" stroke="#38bdf8" stroke-width="4.5" />
+        <path id="arc-hull-bg" d="" fill="none" stroke="rgba(148,163,184,0.2)" stroke-width="4" />
+        <path id="arc-hull" d="" fill="none" stroke="#34d399" stroke-width="4.5" />
+        <circle cx="120" cy="100" r="14" fill="none" stroke="rgba(56,189,248,0.55)" stroke-width="1.2" />
+        <line x1="98" y1="100" x2="111" y2="100" stroke="#e2e8f0" stroke-width="1.4" />
+        <line x1="129" y1="100" x2="142" y2="100" stroke="#e2e8f0" stroke-width="1.4" />
+        <line x1="120" y1="78" x2="120" y2="91" stroke="#e2e8f0" stroke-width="1.4" />
+        <line x1="120" y1="109" x2="120" y2="122" stroke="#e2e8f0" stroke-width="1.4" />
+        <text id="hud-speed" x="22" y="96" text-anchor="end" fill="#e2e8f0" font-size="12" font-weight="700" class="mono">0</text>
+        <text id="hud-thr-lbl" x="22" y="109" text-anchor="end" fill="#7dd3fc" font-size="9" class="mono">THR 18%</text>
+        <text id="hud-hull-lbl" x="218" y="96" text-anchor="start" fill="#e2e8f0" font-size="12" font-weight="700" class="mono">100%</text>
+        <text x="218" y="109" text-anchor="start" fill="#34d399" font-size="9" class="mono">HULL</text>
+      </svg>
+    </div>
+
+    <div class="bottom-center panel" style="padding: 6px 10px;">
+      <canvas id="radar-canvas" width="264" height="148" style="width:264px; height:148px; display:block;"></canvas>
+    </div>
+
+    <div class="bottom-left">
+      <div id="controls-pill" class="panel mono" style="font-size:11px; line-height:1.6;">
+        <div style="display:flex; justify-content:space-between; gap:16px; margin-bottom:4px; color:var(--cyan);">
+          <span>CONTROLS</span>
+          <button id="btn-hide-controls" style="padding:1px 6px; font-size:9px;">Hide</button>
+        </div>
+        W/S Pitch · A/D Roll · Q/E Yaw<br/>
+        Shift/Ctrl Throttle · X Stop · Space Fire
+      </div>
+      <button id="btn-show-controls" class="hidden mono">Controls</button>
+    </div>
+  </div>
+
+  <div id="dock-modal" class="hidden">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <div>
+          <div class="mono" style="font-size:10px; color:var(--cyan); letter-spacing:0.2em;">DOCKED // CORIOLIS PRIME</div>
+          <h2 style="margin:4px 0 0; font-size:20px;">Station Commodity Exchange</h2>
+        </div>
+        <button id="btn-undock" class="primary">Undock &amp; Launch</button>
+      </div>
+      <div id="market-list"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    function attachOutlines(mesh, color = 0x050811) {
+      const edges = new THREE.EdgesGeometry(mesh.geometry, 15);
+      const lines = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 }));
+      mesh.add(lines);
+    }
+
+    class Station {
+      constructor(pos) {
+        this.group = new THREE.Group();
+        this.group.position.copy(pos);
+        this.spinGroup = new THREE.Group();
+        this.group.add(this.spinGroup);
+
+        const hullMat = new THREE.MeshStandardMaterial({ color: 0x4a5568, flatShading: true, roughness: 0.72, metalness: 0.35 });
+        const armorMat = new THREE.MeshStandardMaterial({ color: 0x2d3748, flatShading: true, roughness: 0.55, metalness: 0.5 });
+        const solarMat = new THREE.MeshStandardMaterial({ color: 0x1e3a5f, flatShading: true, roughness: 0.25, metalness: 0.75 });
+        const cyanGlow = new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x22d3ee, emissiveIntensity: 2.2, flatShading: true });
+        const amberGlow = new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 2.0, flatShading: true });
+
+        const coreGeo = new THREE.CylinderGeometry(124, 124, 190, 6, 1);
+        coreGeo.rotateX(Math.PI / 2);
+        const core = new THREE.Mesh(coreGeo, hullMat);
+        attachOutlines(core);
+        this.spinGroup.add(core);
+
+        const frontZ = 108;
+        [[156,56,36,0,41,frontZ],[156,56,36,0,-41,frontZ],[54,28,36,-53,0,frontZ],[54,28,36,53,0,frontZ]].forEach(([w,h,d,x,y,z]) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), armorMat);
+          m.position.set(x,y,z);
+          attachOutlines(m);
+          this.spinGroup.add(m);
+        });
+
+        const darkMat = new THREE.MeshStandardMaterial({ color: 0x0b111e, flatShading: true, side: THREE.DoubleSide });
+        const bayBack = new THREE.Mesh(new THREE.BoxGeometry(56, 28, 2), darkMat);
+        bayBack.position.set(0, 0, 52);
+        this.spinGroup.add(bayBack);
+
+        const topLight = new THREE.Mesh(new THREE.BoxGeometry(52, 2.2, 3.2), cyanGlow);
+        topLight.position.set(0, 13.5, frontZ + 18.5);
+        this.spinGroup.add(topLight);
+        const botLight = new THREE.Mesh(new THREE.BoxGeometry(52, 2.2, 3.2), cyanGlow);
+        botLight.position.set(0, -13.5, frontZ + 18.5);
+        this.spinGroup.add(botLight);
+        const lLight = new THREE.Mesh(new THREE.BoxGeometry(2.4, 24, 3.2), amberGlow);
+        lLight.position.set(-26.5, 0, frontZ + 18.5);
+        this.spinGroup.add(lLight);
+        const rLight = new THREE.Mesh(new THREE.BoxGeometry(2.4, 24, 3.2), amberGlow);
+        rLight.position.set(26.5, 0, frontZ + 18.5);
+        this.spinGroup.add(rLight);
+
+        for (let w = 0; w < 4; w++) {
+          const wg = new THREE.Group();
+          wg.rotation.z = (w * Math.PI) / 2 + Math.PI / 4;
+          const truss = new THREE.Mesh(new THREE.BoxGeometry(10, 128, 12), armorMat);
+          truss.position.y = 182;
+          attachOutlines(truss);
+          wg.add(truss);
+          [-1, 1].forEach((side) => {
+            const panel = new THREE.Mesh(new THREE.BoxGeometry(36, 98, 2.5), solarMat);
+            panel.position.set(side * 25, 184, 0);
+            attachOutlines(panel);
+            wg.add(panel);
+          });
+          this.spinGroup.add(wg);
+        }
+
+        [1, -1].forEach((dir) => {
+          const mast = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 5, 58, 6), armorMat);
+          mast.position.set(0, dir * 155, -18);
+          if (dir < 0) mast.rotation.z = Math.PI;
+          attachOutlines(mast);
+          this.spinGroup.add(mast);
+        });
+
+        this.bayAnchor = new THREE.Object3D();
+        this.bayAnchor.position.set(0, 0, frontZ + 14);
+        this.spinGroup.add(this.bayAnchor);
+      }
+      update(dt) {
+        this.spinGroup.rotation.z += 0.14 * dt;
+      }
+      getBayPosition() {
+        this.group.updateMatrixWorld(true);
+        return this.bayAnchor.getWorldPosition(new THREE.Vector3());
+      }
+    }
+
+    class ParticleField {
+      constructor(scene) {
+        const count = 240;
+        this.origins = new Float32Array(count * 3);
+        this.positions = new Float32Array(count * 6);
+        for (let i = 0; i < count; i++) {
+          this.origins[i*3] = (Math.random()-0.5)*220;
+          this.origins[i*3+1] = (Math.random()-0.5)*220;
+          this.origins[i*3+2] = (Math.random()-0.5)*220;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+        this.dust = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xa5f3fc, transparent: true, opacity: 0.42 }));
+        this.dust.frustumCulled = false;
+        scene.add(this.dust);
+
+        const starCount = 1200;
+        const sPos = new Float32Array(starCount * 3);
+        for (let i = 0; i < starCount; i++) {
+          const u = Math.random(), v = Math.random();
+          const theta = 2 * Math.PI * u, phi = Math.acos(2 * v - 1), r = 2400;
+          sPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
+          sPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+          sPos[i*3+2] = r * Math.cos(phi);
+        }
+        const sGeo = new THREE.BufferGeometry();
+        sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+        this.stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0xe2e8f0, size: 3.5, sizeAttenuation: false, fog: false }));
+        this.stars.frustumCulled = false;
+        scene.add(this.stars);
+      }
+      update(shipPos, shipVel, shipFwd) {
+        this.stars.position.copy(shipPos);
+        const speed = shipVel.length();
+        const tail = shipVel.clone();
+        const len = Math.max(0.6, Math.min(18, speed * 0.08));
+        if (speed > 1) tail.normalize().multiplyScalar(-len);
+        else tail.copy(shipFwd).multiplyScalar(-0.6);
+
+        const arr = this.dust.geometry.attributes.position.array;
+        for (let i = 0; i < 240; i++) {
+          let rx = (((this.origins[i*3] - shipPos.x) % 220) + 220) % 220; if (rx > 110) rx -= 220;
+          let ry = (((this.origins[i*3+1] - shipPos.y) % 220) + 220) % 220; if (ry > 110) ry -= 220;
+          let rz = (((this.origins[i*3+2] - shipPos.z) % 220) + 220) % 220; if (rz > 110) rz -= 220;
+          const wx = shipPos.x + rx, wy = shipPos.y + ry, wz = shipPos.z + rz;
+          arr[i*6] = wx; arr[i*6+1] = wy; arr[i*6+2] = wz;
+          arr[i*6+3] = wx + tail.x; arr[i*6+4] = wy + tail.y; arr[i*6+5] = wz + tail.z;
+        }
+        this.dust.geometry.attributes.position.needsUpdate = true;
+      }
+    }
+
+    class RadarHUD {
+      constructor(canvas) {
+        this.ctx = canvas.getContext('2d');
+      }
+      render(blips) {
+        const ctx = this.ctx, cx = 132, cy = 76, rx = 112, ry = 54;
+        ctx.clearRect(0, 0, 264, 148);
+        ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(14,165,233,0.12)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(56,189,248,0.38)'; ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.55, ry*0.55, 0, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(56,189,248,0.18)'; ctx.stroke();
+
+        ctx.beginPath(); ctx.moveTo(cx, cy-5); ctx.lineTo(cx+5, cy+4); ctx.lineTo(cx-5, cy+4); ctx.closePath();
+        ctx.fillStyle = '#f8fafc'; ctx.fill();
+
+        for (const b of blips) {
+          const bx = cx + b.rx * (rx - 10);
+          const by = cy + b.rz * (ry - 6);
+          const ty = by - b.ry * 26;
+          ctx.strokeStyle = b.color;
+          ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, ty); ctx.stroke();
+          ctx.fillStyle = b.color;
+          ctx.fillRect(bx - 2.5, ty - 2.5, 5, 5);
+        }
+      }
+    }
+
+    class ShipController {
+      constructor(scene) {
+        this.pos = new THREE.Vector3(0, 0, 80);
+        this.quat = new THREE.Quaternion();
+        this.vel = new THREE.Vector3(0, 0, -30);
+        this.throttle = 0.18;
+        this.invertPitch = false;
+        this.hull = 100;
+        this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
+        this.recoil = 0; this.cooldown = 0;
+        this.bolts = [];
+        const boltGeo = new THREE.BoxGeometry(0.3, 0.3, 8.5);
+        const boltMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+        for (let i = 0; i < 24; i++) {
+          const m = new THREE.Mesh(boltGeo, boltMat);
+          m.visible = false;
+          scene.add(m);
+          this.bolts.push({ active: false, mesh: m, pos: new THREE.Vector3(), vel: new THREE.Vector3(), life: 0 });
+        }
+      }
+      getForward() { return new THREE.Vector3(0,0,-1).applyQuaternion(this.quat).normalize(); }
+      getRight() { return new THREE.Vector3(1,0,0).applyQuaternion(this.quat).normalize(); }
+      getUp() { return new THREE.Vector3(0,1,0).applyQuaternion(this.quat).normalize(); }
+      update(dt, keys, camera) {
+        const tDelta = ((keys.has('ShiftLeft')||keys.has('ShiftRight')||keys.has('ArrowUp'))?1:0)
+                     - ((keys.has('ControlLeft')||keys.has('ControlRight')||keys.has('ArrowDown'))?1:0);
+        this.throttle = Math.max(-0.35, Math.min(1, this.throttle + tDelta * 0.65 * dt));
+        if (keys.has('KeyX')) this.throttle = 0;
+
+        const sign = this.invertPitch ? 1 : -1;
+        const pIn = (keys.has('KeyW') ? sign : 0) + (keys.has('KeyS') ? -sign : 0);
+        const rIn = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
+        const yIn = (keys.has('KeyQ') ? 1 : 0) - (keys.has('KeyE') ? 1 : 0);
+
+        const damp = 1 - Math.exp(-7.5 * dt);
+        this.pitchRate += (pIn * 1.45 - this.pitchRate) * damp;
+        this.rollRate += (rIn * 2.25 - this.rollRate) * damp;
+        this.yawRate += (yIn * 1.05 - this.yawRate) * damp;
+
+        this.quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), this.pitchRate * dt));
+        this.quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), this.yawRate * dt));
+        this.quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), this.rollRate * dt));
+        this.quat.normalize();
+
+        const fwd = this.getForward();
+        const desired = fwd.clone().multiplyScalar(this.throttle * 240);
+        this.vel.lerp(desired, 1 - Math.exp(-3.4 * dt));
+        this.pos.addScaledVector(this.vel, dt);
+
+        this.cooldown = Math.max(0, this.cooldown - dt);
+        if (keys.has('Space') && this.cooldown <= 0) {
+          this.cooldown = 0.16;
+          this.recoil = 0.12;
+          const right = this.getRight();
+          [-1.4, 1.4].forEach((side) => {
+            const slot = this.bolts.find((b) => !b.active);
+            if (!slot) return;
+            slot.active = true; slot.life = 0;
+            slot.pos.copy(this.pos).addScaledVector(right, side).addScaledVector(fwd, 3.5);
+            slot.vel.copy(fwd).multiplyScalar(720).addScaledVector(this.vel, 0.3);
+            slot.mesh.position.copy(slot.pos);
+            slot.mesh.quaternion.copy(this.quat);
+            slot.mesh.visible = true;
+          });
+        }
+        this.recoil *= Math.exp(-16 * dt);
+        for (const b of this.bolts) {
+          if (!b.active) continue;
+          b.life += dt;
+          if (b.life > 1.4) { b.active = false; b.mesh.visible = false; continue; }
+          b.pos.addScaledVector(b.vel, dt);
+          b.mesh.position.copy(b.pos);
+        }
+
+        camera.position.copy(this.pos);
+        camera.quaternion.copy(this.quat);
+        camera.rotateZ(-this.rollRate * 0.04);
+        camera.rotateX(-this.pitchRate * 0.03);
+      }
+    }
+
+    function arcPath(cx, cy, r, a1, a2) {
+      const rad = (d) => (d * Math.PI) / 180;
+      const x1 = cx + r * Math.cos(rad(a1)), y1 = cy + r * Math.sin(rad(a1));
+      const x2 = cx + r * Math.cos(rad(a2)), y2 = cy + r * Math.sin(rad(a2));
+      return `M ${x1} ${y1} A ${r} ${r} 0 0 ${a2 >= a1 ? 1 : 0} ${x2} ${y2}`;
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x090d16);
+    scene.fog = new THREE.FogExp2(0x090d16, 0.00048);
+
+    const camera = new THREE.PerspectiveCamera(66, window.innerWidth / window.innerHeight, 0.25, 4800);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.getElementById('viewport').appendChild(renderer.domElement);
+
+    const sunDir = new THREE.Vector3(0.62, 0.36, -0.69).normalize();
+    const sunMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(120, 2), new THREE.MeshBasicMaterial({ color: 0xfff3d1, fog: false }));
+    sunMesh.position.copy(sunDir.clone().multiplyScalar(2200));
+    scene.add(sunMesh);
+
+    const dirLight = new THREE.DirectionalLight(0xffe7c2, 2.5);
+    dirLight.position.copy(sunDir.clone().multiplyScalar(900));
+    scene.add(dirLight);
+    scene.add(new THREE.HemisphereLight(0x4f78c8, 0x16122c, 1.0));
+    scene.add(new THREE.AmbientLight(0x28365e, 0.55));
+
+    const station = new Station(new THREE.Vector3(0, 0, -680));
+    scene.add(station.group);
+    const particles = new ParticleField(scene);
+    const ship = new ShipController(scene);
+    const radar = new RadarHUD(document.getElementById('radar-canvas'));
+
+    const asteroids = [];
+    for (let i = 0; i < 24; i++) {
+      const r = 14 + (i % 5) * 5;
+      const geo = new THREE.IcosahedronGeometry(r, 1);
+      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x5c6473, flatShading: true, roughness: 0.85 }));
+      const ang = (i / 24) * Math.PI * 2;
+      m.position.set(Math.cos(ang) * (280 + (i % 4) * 90), Math.sin(i * 2.1) * 140, -680 + Math.sin(ang) * 320);
+      attachOutlines(m);
+      scene.add(m);
+      asteroids.push({ mesh: m, radius: r });
+    }
+
+    let state = 'title', credits = 1500, cargo = { fuel: 2, rations: 2 };
+    const market = [
+      { id: 'palladium', name: 'Palladium Ore', price: 295 },
+      { id: 'titanium', name: 'Refined Titanium', price: 140 },
+      { id: 'quantum', name: 'Quantum Chips', price: 610 },
+      { id: 'fuel', name: 'Deuterium Cells', price: 95 },
+    ];
+    const keys = new Set();
+    window.addEventListener('keydown', (e) => {
+      keys.add(e.code);
+      if (e.code === 'KeyI' && !e.repeat) {
+        ship.invertPitch = !ship.invertPitch;
+        document.getElementById('btn-invert').textContent = `Inv Pitch [I]: ${ship.invertPitch ? 'ON' : 'OFF'}`;
+      }
+      if (state === 'title' && e.code === 'Enter') startFlight();
+    });
+    window.addEventListener('keyup', (e) => keys.delete(e.code));
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function startFlight() {
+      state = 'playing';
+      document.getElementById('title-overlay').classList.add('hidden');
+      document.getElementById('hud').classList.remove('hidden');
+    }
+    document.getElementById('btn-launch').onclick = startFlight;
+    document.getElementById('btn-title-invert').onclick = (e) => {
+      ship.invertPitch = !ship.invertPitch;
+      e.target.textContent = `Pitch: ${ship.invertPitch ? 'Inverted' : 'Standard'}`;
+      document.getElementById('btn-invert').textContent = `Inv Pitch [I]: ${ship.invertPitch ? 'ON' : 'OFF'}`;
+    };
+    document.getElementById('btn-invert').onclick = () => {
+      ship.invertPitch = !ship.invertPitch;
+      document.getElementById('btn-invert').textContent = `Inv Pitch [I]: ${ship.invertPitch ? 'ON' : 'OFF'}`;
+    };
+    document.getElementById('btn-hide-controls').onclick = () => {
+      document.getElementById('controls-pill').classList.add('hidden');
+      document.getElementById('btn-show-controls').classList.remove('hidden');
+    };
+    document.getElementById('btn-show-controls').onclick = () => {
+      document.getElementById('controls-pill').classList.remove('hidden');
+      document.getElementById('btn-show-controls').classList.add('hidden');
+    };
+    document.getElementById('btn-undock').onclick = () => {
+      document.getElementById('dock-modal').classList.add('hidden');
+      ship.pos.set(0, 0, -450);
+      ship.quat.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI);
+      ship.throttle = 0.25;
+      ship.vel.set(0, 0, 50);
+      state = 'playing';
+    };
+
+    function renderMarket() {
+      const list = document.getElementById('market-list');
+      list.innerHTML = '';
+      market.forEach((m) => {
+        const owned = cargo[m.id] || 0;
+        const row = document.createElement('div');
+        row.className = 'market-row mono';
+        row.innerHTML = `<span>${m.name}</span><span>${m.price} CR</span><span>Hold: ${owned}t</span>`;
+        const btns = document.createElement('div');
+        const b = document.createElement('button'); b.textContent = 'Buy 1';
+        b.onclick = () => { if (credits >= m.price) { credits -= m.price; cargo[m.id] = (cargo[m.id]||0)+1; renderMarket(); } };
+        const s = document.createElement('button'); s.textContent = 'Sell 1';
+        s.onclick = () => { if ((cargo[m.id]||0) > 0) { credits += m.price; cargo[m.id]--; renderMarket(); } };
+        btns.append(b, ' ', s);
+        row.appendChild(btns);
+        list.appendChild(row);
+      });
+      document.getElementById('hud-credits').textContent = `${credits.toLocaleString()} CR`;
+    }
+
+    document.getElementById('arc-thr-bg').setAttribute('d', arcPath(120, 100, 74, 130, 230));
+    document.getElementById('arc-hull-bg').setAttribute('d', arcPath(120, 100, 74, -48, 48));
+    document.getElementById('arc-hull').setAttribute('d', arcPath(120, 100, 74, -48, 48));
+
+    let last = performance.now(), orbit = 0.4;
+    function animate() {
+      requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      station.update(dt);
+
+      if (state === 'title') {
+        orbit += dt * 0.14;
+        const p = station.group.position;
+        camera.position.set(p.x + Math.sin(orbit) * 390, p.y + 85, p.z + Math.cos(orbit) * 390);
+        camera.lookAt(p.x - 70, p.y, p.z);
+        particles.update(camera.position, new THREE.Vector3(0,0,-18), new THREE.Vector3(0,0,-1));
+      } else if (state === 'playing') {
+        ship.update(dt, keys, camera);
+        const fwd = ship.getForward(), right = ship.getRight(), up = ship.getUp();
+        particles.update(ship.pos, ship.vel, fwd);
+
+        const bayPos = station.getBayPosition();
+        const bayDist = ship.pos.distanceTo(bayPos);
+        if (bayDist < 54 && ship.vel.length() <= 55) {
+          state = 'docked';
+          renderMarket();
+          document.getElementById('dock-modal').classList.remove('hidden');
+        }
+
+        const blips = [];
+        const addBlip = (worldPos, color) => {
+          const off = worldPos.clone().sub(ship.pos);
+          let rx = off.dot(right) / 900, rz = -off.dot(fwd) / 900;
+          const h = Math.hypot(rx, rz); if (h > 1) { rx /= h; rz /= h; }
+          const ry = Math.max(-1, Math.min(1, off.dot(up) / 600));
+          blips.push({ rx, rz, ry, color });
+        };
+        addBlip(station.group.position, '#38bdf8');
+        asteroids.forEach((a) => addBlip(a.mesh.position, '#fbbf24'));
+        radar.render(blips);
+
+        const spd = Math.round(ship.vel.length());
+        document.getElementById('hud-speed').textContent = spd;
+        document.getElementById('hud-thr-lbl').textContent = `THR ${Math.round(ship.throttle * 100)}%`;
+        document.getElementById('hud-target-dist').textContent = bayDist >= 1000 ? `${(bayDist/1000).toFixed(2)} km` : `${Math.round(bayDist)} m`;
+        const thrEnd = ship.throttle >= 0 ? 148 + ship.throttle * 82 : 148 - (Math.abs(ship.throttle)/0.35)*18;
+        document.getElementById('arc-thr').setAttribute('d', ship.throttle >= 0 ? arcPath(120,100,74,148,thrEnd) : arcPath(120,100,74,thrEnd,148));
+      }
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

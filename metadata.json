@@ -1,0 +1,8 @@
+{
+  "name": "Coriolis Frontier",
+  "description": "Low-poly flat-shaded 3D space flight and trading prototype inspired by classic space sims.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
