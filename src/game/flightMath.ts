@@ -2,6 +2,10 @@ import type { DockingAlignment, RadarBlip, TargetKind, Vec3Like } from './types'
 
 export const THROTTLE_MIN = -0.35;
 export const THROTTLE_MAX = 1.0;
+export const BASE_MAX_SPEED_MPS = 240;
+export const CRUISE_SPEED_MULTIPLIER = 16;
+export const CRUISE_MAX_SPEED_MPS = BASE_MAX_SPEED_MPS * CRUISE_SPEED_MULTIPLIER; // 3840 m/s (~25km in ~8-10s)
+export const MASS_LOCK_CLEARANCE_M = 3000;
 export const DOCKING_SAFE_SPEED_MPS = 85;
 export const DOCKING_APPROACH_RANGE_M = 600;
 export const DOCKING_BAY_CAPTURE_RADIUS_M = 74;
@@ -26,6 +30,26 @@ export function stepThrottle(
   return clampThrottle(next);
 }
 
+export const SCROLL_THROTTLE_STEP = 0.05;
+
+export function applyScrollThrottleStep(
+  current: number,
+  deltaY: number,
+  step = SCROLL_THROTTLE_STEP
+): number {
+  if (!Number.isFinite(deltaY) || deltaY === 0) {
+    return clampThrottle(current);
+  }
+  // Scroll up (deltaY < 0) increases throttle; scroll down (deltaY > 0) decreases throttle
+  const direction = deltaY < 0 ? 1 : -1;
+  const next = current + direction * step;
+  // Snap cleanly to 0% when stepping across zero from either side
+  if ((current > 0.001 && next < 0) || (current < -0.001 && next > 0)) {
+    return 0;
+  }
+  return clampThrottle(Math.round(next * 1000) / 1000);
+}
+
 export function computePitchSign(invertPitch: boolean): number {
   // Default: W pitches nose DOWN (-1 around local X), S pitches nose UP (+1)
   // Inverted: W pitches nose UP (+1), S pitches nose DOWN (-1)
@@ -38,6 +62,9 @@ export function dampScalar(current: number, target: number, lambda: number, dt: 
 }
 
 export function formatDistance(distanceMeters: number): string {
+  if (distanceMeters >= 10000) {
+    return `${(distanceMeters / 1000).toFixed(1)} km`;
+  }
   if (distanceMeters >= 1000) {
     return `${(distanceMeters / 1000).toFixed(2)} km`;
   }
@@ -169,4 +196,274 @@ export function projectToRadarBlip(params: {
 export function computeCollisionDamage(impactSpeed: number, massFactor = 1): number {
   if (impactSpeed < 12) return 0;
   return Math.round((impactSpeed - 10) * 0.45 * massFactor);
+}
+
+export interface EngineAudioParams {
+  gain: number;
+  noiseGain: number;
+  oscFreqHz: number;
+  noiseFilterHz: number;
+}
+
+export function computeEngineAudioParams(
+  absThrottle: number,
+  active: boolean,
+  muted: boolean,
+  cruiseFactor = 0
+): EngineAudioParams {
+  const t = Math.max(0, Math.min(1, absThrottle));
+  const c = Math.max(0, Math.min(1, cruiseFactor));
+  if (!active || muted) {
+    return {
+      gain: 0,
+      noiseGain: 0,
+      oscFreqHz: 46,
+      noiseFilterHz: 110,
+    };
+  }
+  return {
+    gain: 0.018 + t * 0.075 + c * 0.065,
+    noiseGain: 0.008 + t * 0.048 + c * 0.052,
+    oscFreqHz: 46 + t * 68 + c * 74,
+    noiseFilterHz: 110 + t * 320 + c * 560,
+  };
+}
+
+export interface MassLockBody {
+  id: string;
+  name: string;
+  kind: TargetKind;
+  position: Vec3Like;
+  surfaceRadius: number;
+  lockClearance?: number;
+}
+
+export interface MassLockStatus {
+  locked: boolean;
+  blockingBodyName: string | null;
+  blockingBodyKind: TargetKind | null;
+  clearanceMeters: number;
+}
+
+export function evaluateMassLock(
+  shipPos: Vec3Like,
+  bodies: MassLockBody[]
+): MassLockStatus {
+  let closestClearance = Infinity;
+  let blockingBody: MassLockBody | null = null;
+
+  for (const body of bodies) {
+    const dist = Math.hypot(
+      shipPos.x - body.position.x,
+      shipPos.y - body.position.y,
+      shipPos.z - body.position.z
+    );
+    const clearance = dist - body.surfaceRadius;
+    const threshold = body.lockClearance ?? MASS_LOCK_CLEARANCE_M;
+    if (clearance <= threshold && clearance < closestClearance) {
+      closestClearance = clearance;
+      blockingBody = body;
+    }
+  }
+
+  return {
+    locked: blockingBody !== null,
+    blockingBodyName: blockingBody?.name ?? null,
+    blockingBodyKind: blockingBody?.kind ?? null,
+    clearanceMeters: closestClearance,
+  };
+}
+
+export interface TargetIndicatorProjection {
+  onScreen: boolean;
+  screenX: number;
+  screenY: number;
+  edgeX: number;
+  edgeY: number;
+  edgeAngleDeg: number;
+  bearingDot: number;
+}
+
+export function projectTargetIndicator(params: {
+  worldOffset: Vec3Like;
+  shipRight: Vec3Like;
+  shipUp: Vec3Like;
+  shipForward: Vec3Like;
+  ndcX: number;
+  ndcY: number;
+  ndcZ: number;
+}): TargetIndicatorProjection {
+  const { worldOffset, shipRight, shipUp, shipForward, ndcX, ndcY, ndcZ } = params;
+  const dist = Math.hypot(worldOffset.x, worldOffset.y, worldOffset.z) || 1;
+  const dx = worldOffset.x / dist;
+  const dy = worldOffset.y / dist;
+  const dz = worldOffset.z / dist;
+
+  const localRight = dx * shipRight.x + dy * shipRight.y + dz * shipRight.z;
+  const localUp = dx * shipUp.x + dy * shipUp.y + dz * shipUp.z;
+  const bearingDot = dx * shipForward.x + dy * shipForward.y + dz * shipForward.z;
+
+  const onScreen =
+    bearingDot > 0.05 &&
+    ndcZ >= -1 &&
+    ndcZ <= 1 &&
+    Math.abs(ndcX) <= 0.9 &&
+    Math.abs(ndcY) <= 0.88;
+
+  const screenX = (ndcX * 0.5 + 0.5) * 100;
+  const screenY = (-ndcY * 0.5 + 0.5) * 100;
+
+  // Ship-local directional vector for robust off-screen / behind-ship arrow placement
+  let dirX = localRight;
+  let dirY = localUp;
+  const planarLen = Math.hypot(dirX, dirY);
+  if (planarLen < 0.0001) {
+    // Target is straight behind or dead ahead
+    dirX = 0;
+    dirY = bearingDot >= 0 ? 1 : -1;
+  } else {
+    dirX /= planarLen;
+    dirY /= planarLen;
+  }
+
+  // Place arrow along safe interior HUD perimeter (X: 24..76%, Y: 14..78%) so it never collides with corner HUD cards or bottom radar
+  // Screen Y increases downward while localUp increases upward.
+  const halfW = 26;
+  const halfH = 32;
+  const scaleX = Math.abs(dirX) > 0.001 ? halfW / Math.abs(dirX) : Infinity;
+  const scaleY = Math.abs(dirY) > 0.001 ? halfH / Math.abs(dirY) : Infinity;
+  const t = Math.min(scaleX, scaleY);
+
+  const edgeX = Math.max(24, Math.min(76, 50 + dirX * t));
+  const edgeY = Math.max(14, Math.min(78, 46 - dirY * t));
+  // 0deg points UP (dirX=0, dirY=1)
+  const edgeAngleDeg = (Math.atan2(dirX, dirY) * 180) / Math.PI;
+
+  return {
+    onScreen,
+    screenX,
+    screenY,
+    edgeX,
+    edgeY,
+    edgeAngleDeg,
+    bearingDot,
+  };
+}
+
+export interface ProximityWarningResult {
+  active: boolean;
+  urgent: boolean;
+  kind: 'asteroid' | 'station-speed' | 'none';
+  message: string | null;
+}
+
+export function evaluateProximityWarning(params: {
+  shipSpeedMps: number;
+  nearestAsteroidClearanceM: number;
+  nearestAsteroidClosingMps: number;
+  stationDistanceM: number;
+  stationCollisionRadiusM: number;
+  docking: DockingAlignment;
+}): ProximityWarningResult {
+  const {
+    shipSpeedMps,
+    nearestAsteroidClearanceM,
+    nearestAsteroidClosingMps,
+    stationDistanceM,
+    stationCollisionRadiusM,
+    docking,
+  } = params;
+
+  if (
+    nearestAsteroidClearanceM < 24 ||
+    (nearestAsteroidClearanceM < 58 && nearestAsteroidClosingMps > 22)
+  ) {
+    return {
+      active: true,
+      urgent: nearestAsteroidClearanceM < 26,
+      kind: 'asteroid',
+      message: 'PROXIMITY ALERT — ASTEROID CLEARANCE',
+    };
+  }
+
+  const approachingFastToBay =
+    docking.distanceMeters < 340 &&
+    !docking.isSpeedSafe &&
+    shipSpeedMps > DOCKING_SAFE_SPEED_MPS + 12;
+
+  const grazingStationHull =
+    stationDistanceM < stationCollisionRadiusM + 58 &&
+    !docking.isCorridorAligned &&
+    shipSpeedMps > 45;
+
+  if (approachingFastToBay || grazingStationHull) {
+    return {
+      active: true,
+      urgent: docking.distanceMeters < 170 || stationDistanceM < stationCollisionRadiusM + 26,
+      kind: 'station-speed',
+      message: approachingFastToBay
+        ? 'APPROACH SPEED HIGH — REDUCE THROTTLE'
+        : 'PROXIMITY ALERT — STATION SUPERSTRUCTURE',
+    };
+  }
+
+  return {
+    active: false,
+    urgent: false,
+    kind: 'none',
+    message: null,
+  };
+}
+
+export const MOUSE_DEADZONE_PX = 28;
+export const MOUSE_MAX_RADIUS_PX = 260;
+
+export interface MouseSteerResult {
+  pitch: number;
+  yaw: number;
+  normX: number;
+  normY: number;
+  magnitude: number;
+  inDeadzone: boolean;
+}
+
+/**
+ * Converts cursor offset (in pixels from viewport center) into smooth virtual-joystick
+ * pitch and yaw commands.
+ * Cursor UP (offsetY < 0) -> positive pitch (nose UP toward cursor).
+ * Cursor LEFT (offsetX < 0) -> positive yaw (nose LEFT toward cursor).
+ */
+export function computeMouseSteerAxes(
+  offsetX: number,
+  offsetY: number,
+  deadzonePx = MOUSE_DEADZONE_PX,
+  maxRadiusPx = MOUSE_MAX_RADIUS_PX
+): MouseSteerResult {
+  const dist = Math.hypot(offsetX, offsetY);
+  if (dist <= deadzonePx || maxRadiusPx <= deadzonePx || dist < 0.0001) {
+    return {
+      pitch: 0,
+      yaw: 0,
+      normX: 0,
+      normY: 0,
+      magnitude: 0,
+      inDeadzone: true,
+    };
+  }
+
+  const span = maxRadiusPx - deadzonePx;
+  const effectiveDist = Math.min(dist, maxRadiusPx) - deadzonePx;
+  const magnitude = Math.max(0, Math.min(1, effectiveDist / span));
+
+  const dirX = offsetX / dist;
+  const dirY = offsetY / dist;
+
+  return {
+    pitch: -dirY * magnitude,
+    yaw: -dirX * magnitude,
+    normX: dirX * magnitude,
+    normY: dirY * magnitude,
+    magnitude,
+    inDeadzone: false,
+  };
 }

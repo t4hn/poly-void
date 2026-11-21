@@ -5,6 +5,11 @@ export class RadarHUD {
   private ctx: CanvasRenderingContext2D | null = null;
   private width = 260;
   private height = 148;
+  private accentRgb = '56, 189, 248';
+
+  public setAccentRgb(rgb: string): void {
+    this.accentRgb = rgb;
+  }
 
   public attachCanvas(canvas: HTMLCanvasElement | null): void {
     this.canvas = canvas;
@@ -39,7 +44,7 @@ export class RadarHUD {
 
     // Outer subtle scanner glow disc
     const grad = ctx.createRadialGradient(cx, cy, 8, cx, cy, rx);
-    grad.addColorStop(0, 'rgba(14, 165, 233, 0.14)');
+    grad.addColorStop(0, `rgba(${this.accentRgb}, 0.14)`);
     grad.addColorStop(0.7, 'rgba(15, 23, 42, 0.36)');
     grad.addColorStop(1, 'rgba(9, 13, 22, 0.08)');
 
@@ -49,19 +54,19 @@ export class RadarHUD {
     ctx.fill();
 
     // Concentric range ellipses
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.34)';
+    ctx.strokeStyle = `rgba(${this.accentRgb}, 0.36)`;
     ctx.lineWidth = 1.2;
     ctx.stroke();
 
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx * 0.62, ry * 0.62, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.16)';
+    ctx.strokeStyle = `rgba(${this.accentRgb}, 0.18)`;
     ctx.lineWidth = 1;
     ctx.stroke();
 
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx * 0.3, ry * 0.3, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+    ctx.strokeStyle = `rgba(${this.accentRgb}, 0.14)`;
     ctx.stroke();
 
     // Crosshairs & forward FOV wedge lines
@@ -79,7 +84,7 @@ export class RadarHUD {
     ctx.lineTo(cx - rx * 0.48, cy - ry * 0.88);
     ctx.moveTo(cx, cy);
     ctx.lineTo(cx + rx * 0.48, cy - ry * 0.88);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
+    ctx.strokeStyle = `rgba(${this.accentRgb}, 0.34)`;
     ctx.lineWidth = 1;
     ctx.stroke();
 
@@ -110,9 +115,24 @@ export class RadarHUD {
       } else if (blip.kind === 'bay') {
         color = '#22d3ee';
         size = 4;
+      } else if (blip.kind === 'planet') {
+        color = '#a78bfa';
+        size = 5.4;
+      } else if (blip.kind === 'asteroid_belt') {
+        color = '#f59e0b';
+        size = 4.6;
+      } else if (blip.kind === 'shuttle') {
+        color = '#7dd3fc';
+        size = 2.6;
       } else if (blip.kind === 'canister') {
         color = '#34d399';
         size = 3.2;
+      } else if (blip.kind === 'star') {
+        color = '#fde047';
+        size = 4.6;
+      } else if (blip.kind === 'pirate') {
+        color = '#f87171';
+        size = 4.6;
       }
 
       // Base ring on the scanner plane
@@ -143,6 +163,52 @@ export class RadarHUD {
       if (blip.kind === 'station' || blip.kind === 'bay') {
         ctx.fillStyle = color;
         ctx.fillRect(baseX - size / 2, tipY - size / 2, size, size);
+      } else if (blip.kind === 'planet') {
+        ctx.beginPath();
+        ctx.arc(baseX, tipY, size, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(167, 139, 250, 0.35)';
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (blip.kind === 'asteroid_belt') {
+        ctx.beginPath();
+        ctx.setLineDash([2, 2]);
+        ctx.arc(baseX, tipY, size, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (blip.kind === 'shuttle') {
+        ctx.beginPath();
+        ctx.moveTo(baseX, tipY - 3.2);
+        ctx.lineTo(baseX + 2.8, tipY + 2.4);
+        ctx.lineTo(baseX - 2.8, tipY + 2.4);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      } else if (blip.kind === 'star') {
+        ctx.beginPath();
+        ctx.arc(baseX, tipY, size + 2.2, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(253, 224, 71, 0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(baseX, tipY, size, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      } else if (blip.kind === 'pirate') {
+        ctx.beginPath();
+        ctx.moveTo(baseX, tipY - size);
+        ctx.lineTo(baseX + size, tipY);
+        ctx.lineTo(baseX, tipY + size);
+        ctx.lineTo(baseX - size, tipY);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#fecaca';
+        ctx.lineWidth = 1;
+        ctx.stroke();
       } else {
         ctx.beginPath();
         ctx.arc(baseX, tipY, size, 0, Math.PI * 2);
@@ -154,7 +220,7 @@ export class RadarHUD {
       if (lockedId && blip.id === lockedId) {
         ctx.strokeStyle = '#f8fafc';
         ctx.lineWidth = 1.2;
-        ctx.strokeRect(baseX - 6, tipY - 6, 12, 12);
+        ctx.strokeRect(baseX - 7, tipY - 7, 14, 14);
       }
     }
     ctx.globalAlpha = 1;

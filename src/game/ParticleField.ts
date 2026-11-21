@@ -5,6 +5,9 @@ const DUST_COUNT = 260;
 const DUST_BOX_SIZE = 220;
 const DUST_HALF = DUST_BOX_SIZE / 2;
 
+const HYPERSPACE_LINE_COUNT = 180;
+const HYPERSPACE_DEPTH = 260;
+
 const EXPLOSION_POOL_SIZE = 160;
 
 interface BurstParticle {
@@ -19,20 +22,32 @@ interface BurstParticle {
 
 const _dummy = new THREE.Object3D();
 const _relVel = new THREE.Vector3();
+const _negZ = new THREE.Vector3(0, 0, -1);
 
 export class ParticleField {
   public readonly dustLines: THREE.LineSegments;
+  public readonly hyperspaceLines: THREE.LineSegments;
   public readonly starPoints: THREE.Points;
   public readonly sunGroup: THREE.Group;
   public readonly burstMesh: THREE.InstancedMesh;
 
   private readonly dustOrigins: Float32Array;
   private readonly dustPositions: Float32Array;
+  private readonly tunnelSeeds: Float32Array; // [radius, angle, zOffset, speedMult]
+  private readonly tunnelPositions: Float32Array;
+  private readonly tunnelMat: THREE.LineBasicMaterial;
   private readonly burstPool: BurstParticle[] = [];
   private burstCursor = 0;
   private readonly sunLight: THREE.DirectionalLight;
   private readonly sunCoreMat: THREE.MeshBasicMaterial;
+  private readonly sunSprite: THREE.Sprite;
   private readonly sunSpriteMat: THREE.SpriteMaterial;
+  private readonly sunOuterSprite: THREE.Sprite;
+  private readonly sunOuterSpriteMat: THREE.SpriteMaterial;
+  private readonly dustMat: THREE.LineBasicMaterial;
+  private readonly dustBaseColor = new THREE.Color(0xa5f3fc);
+  private readonly dustCruiseColor = new THREE.Color(0x38bdf8);
+  private timeAccum = 0;
 
   constructor(scene: THREE.Scene, isSoftwareGl: boolean) {
     // 1. Space Dust Streaks wrapping around player ship
@@ -57,15 +72,43 @@ export class ParticleField {
 
     const dustGeo = new THREE.BufferGeometry();
     dustGeo.setAttribute('position', new THREE.BufferAttribute(this.dustPositions, 3));
-    const dustMat = new THREE.LineBasicMaterial({
+    this.dustMat = new THREE.LineBasicMaterial({
       color: 0xa5f3fc,
       transparent: true,
       opacity: 0.42,
       depthWrite: false,
     });
-    this.dustLines = new THREE.LineSegments(dustGeo, dustMat);
+    this.dustLines = new THREE.LineSegments(dustGeo, this.dustMat);
     this.dustLines.frustumCulled = false;
     scene.add(this.dustLines);
+
+    // 1b. Hyperspace Tunnel Star-Lines (activated during 3s jump countdown)
+    this.tunnelSeeds = new Float32Array(HYPERSPACE_LINE_COUNT * 4);
+    this.tunnelPositions = new Float32Array(HYPERSPACE_LINE_COUNT * 6);
+    for (let i = 0; i < HYPERSPACE_LINE_COUNT; i++) {
+      const r = 7 + Math.random() * 44;
+      const angle = Math.random() * Math.PI * 2;
+      const z = -Math.random() * HYPERSPACE_DEPTH + 15;
+      const speedMult = 0.75 + Math.random() * 0.7;
+      this.tunnelSeeds[i * 4] = r;
+      this.tunnelSeeds[i * 4 + 1] = angle;
+      this.tunnelSeeds[i * 4 + 2] = z;
+      this.tunnelSeeds[i * 4 + 3] = speedMult;
+    }
+    const tunnelGeo = new THREE.BufferGeometry();
+    tunnelGeo.setAttribute('position', new THREE.BufferAttribute(this.tunnelPositions, 3));
+    this.tunnelMat = new THREE.LineBasicMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    });
+    this.hyperspaceLines = new THREE.LineSegments(tunnelGeo, this.tunnelMat);
+    this.hyperspaceLines.frustumCulled = false;
+    this.hyperspaceLines.visible = false;
+    scene.add(this.hyperspaceLines);
 
     // 2. Distant Twinkling Starfield Sphere
     const starCount = 1400;
@@ -83,7 +126,8 @@ export class ParticleField {
       const v = Math.random();
       const theta = 2 * Math.PI * u;
       const phi = Math.acos(2 * v - 1);
-      const r = 2400 + Math.random() * 600;
+      // Place starfield far beyond all planetary orbits (90km..118km < camera.far 160km)
+      const r = 90000 + Math.random() * 28000;
       starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
       starPos[i * 3 + 2] = r * Math.cos(phi);
@@ -99,25 +143,25 @@ export class ParticleField {
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
     starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
     const starMat = new THREE.PointsMaterial({
-      size: 3.8,
+      size: 3.6,
       sizeAttenuation: false,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
+      depthWrite: false,
       fog: false,
     });
     this.starPoints = new THREE.Points(starGeo, starMat);
     this.starPoints.frustumCulled = false;
+    this.starPoints.renderOrder = -10;
     scene.add(this.starPoints);
 
-    // 3. Distant Procedural Sun Sphere + Corona + Balanced Lighting Rig
+    // 3. System-Center Procedural Sun Sphere + Dual-Layer Corona Glow Halo + Balanced Lighting Rig
     this.sunGroup = new THREE.Group();
-    const sunDir = new THREE.Vector3(0.62, 0.36, -0.69).normalize();
-    const sunPos = sunDir.clone().multiplyScalar(2200);
-    this.sunGroup.position.copy(sunPos);
+    this.sunGroup.position.set(0, 0, 0);
 
     this.sunCoreMat = new THREE.MeshBasicMaterial({ color: 0xfff3d1, fog: false });
-    const sunCore = new THREE.Mesh(new THREE.IcosahedronGeometry(125, 2), this.sunCoreMat);
+    const sunCore = new THREE.Mesh(new THREE.IcosahedronGeometry(1400, 2), this.sunCoreMat);
     this.sunGroup.add(sunCore);
 
     const sunHaloTex = createSunCoronaTexture();
@@ -125,26 +169,41 @@ export class ParticleField {
       map: sunHaloTex,
       color: 0xffd188,
       transparent: true,
+      opacity: 0.96,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       fog: false,
     });
-    const sunSprite = new THREE.Sprite(this.sunSpriteMat);
-    sunSprite.scale.set(780, 780, 1);
-    this.sunGroup.add(sunSprite);
+    this.sunSprite = new THREE.Sprite(this.sunSpriteMat);
+    this.sunSprite.scale.set(5600, 5600, 1);
+    this.sunGroup.add(this.sunSprite);
+
+    this.sunOuterSpriteMat = new THREE.SpriteMaterial({
+      map: sunHaloTex,
+      color: 0xffd188,
+      transparent: true,
+      opacity: 0.48,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    });
+    this.sunOuterSprite = new THREE.Sprite(this.sunOuterSpriteMat);
+    this.sunOuterSprite.scale.set(11200, 11200, 1);
+    this.sunGroup.add(this.sunOuterSprite);
+
     scene.add(this.sunGroup);
 
     // Warm Key DirectionalLight paired with cool blue-purple HemisphereLight & subtle AmbientLight
-    this.sunLight = new THREE.DirectionalLight(0xffe7c2, 2.7);
-    this.sunLight.position.copy(sunDir.clone().multiplyScalar(900));
+    this.sunLight = new THREE.DirectionalLight(0xffe7c2, 2.75);
+    this.sunLight.position.set(0, 200, 1000);
     this.sunLight.castShadow = !isSoftwareGl;
     this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.near = 50;
-    this.sunLight.shadow.camera.far = 1800;
-    this.sunLight.shadow.camera.left = -350;
-    this.sunLight.shadow.camera.right = 350;
-    this.sunLight.shadow.camera.top = 350;
-    this.sunLight.shadow.camera.bottom = -350;
+    this.sunLight.shadow.camera.far = 2200;
+    this.sunLight.shadow.camera.left = -450;
+    this.sunLight.shadow.camera.right = 450;
+    this.sunLight.shadow.camera.top = 450;
+    this.sunLight.shadow.camera.bottom = -450;
     this.sunLight.shadow.bias = -0.0005;
     this.sunLight.shadow.normalBias = 0.02;
     scene.add(this.sunLight);
@@ -191,10 +250,32 @@ export class ParticleField {
     scene.add(this.burstMesh);
   }
 
+  public readonly sunCoreRadius = 1400;
+  public readonly sunScoopRadius = 3800;
+
+  public getSunWorldPosition(): THREE.Vector3 {
+    return this.sunGroup.position;
+  }
+
   public setSunAppearance(coreHex: number, coronaHex: number, lightHex: number): void {
     this.sunCoreMat.color.setHex(coreHex);
     this.sunSpriteMat.color.setHex(coronaHex);
+    this.sunOuterSpriteMat.color.setHex(coronaHex);
     this.sunLight.color.setHex(lightHex);
+  }
+
+  public updateSunLightFocus(focusPos: THREE.Vector3): void {
+    // Aim directional light from the system-center Sun through focusPos so all planets & station facets get true terminator shading
+    _relVel.copy(this.sunGroup.position).sub(focusPos);
+    const len = _relVel.length();
+    if (len > 1) {
+      _relVel.divideScalar(len);
+    } else {
+      _relVel.set(0.5, 0.4, 0.7).normalize();
+    }
+    this.sunLight.target.position.copy(focusPos);
+    this.sunLight.position.copy(focusPos).addScaledVector(_relVel, 950);
+    this.sunLight.target.updateMatrixWorld();
   }
 
   public spawnBurst(
@@ -230,17 +311,30 @@ export class ParticleField {
     shipPos: THREE.Vector3,
     shipVelocity: THREE.Vector3,
     shipForward: THREE.Vector3,
-    warpBoost = 0
+    warpBoost = 0,
+    cruiseBoost = 0
   ): void {
+    this.timeAccum += dt;
+
+    // Gentle living pulse on the stellar corona glow
+    const pulse = 1 + Math.sin(this.timeAccum * 1.45) * 0.04;
+    this.sunSprite.scale.set(5600 * pulse, 5600 * pulse, 1);
+    const outerPulse = 1 + Math.cos(this.timeAccum * 0.95) * 0.06;
+    this.sunOuterSprite.scale.set(11200 * outerPulse, 11200 * outerPulse, 1);
+    this.sunOuterSpriteMat.opacity = 0.44 + Math.sin(this.timeAccum * 1.2) * 0.06;
+
     // Keep stars centered on ship
     this.starPoints.position.copy(shipPos);
 
-    // Update wrapping space dust streaks relative to ship position
+    // Update wrapping space dust streaks relative to ship position (dramatically stretched in Cruise Drive)
     _relVel.copy(shipVelocity);
     const speed = _relVel.length();
-    // Streak tail extends opposite to ship travel direction, elongating during hyperspace charge
-    const streakLen = Math.max(0.55, Math.min(20, speed * 0.08)) + warpBoost * 42;
-    if (warpBoost > 0.05) {
+    const normalStreak = Math.max(0.55, Math.min(18, speed * 0.075));
+    const streakLen = normalStreak + cruiseBoost * 42 + warpBoost * 46;
+    this.dustMat.opacity = 0.42 + cruiseBoost * 0.4;
+    this.dustMat.color.copy(this.dustBaseColor).lerp(this.dustCruiseColor, cruiseBoost);
+
+    if (warpBoost > 0.05 || cruiseBoost > 0.15) {
       _relVel.copy(shipForward).multiplyScalar(-streakLen);
     } else if (speed > 1) {
       _relVel.normalize().multiplyScalar(-streakLen);
@@ -256,7 +350,6 @@ export class ParticleField {
       const oy = this.dustOrigins[i * 3 + 1];
       const oz = this.dustOrigins[i * 3 + 2];
 
-      // Wrap relative offset into [-DUST_HALF, DUST_HALF] around shipPos
       let rx = ((ox - shipPos.x) % DUST_BOX_SIZE + DUST_BOX_SIZE) % DUST_BOX_SIZE;
       if (rx > DUST_HALF) rx -= DUST_BOX_SIZE;
       let ry = ((oy - shipPos.y) % DUST_BOX_SIZE + DUST_BOX_SIZE) % DUST_BOX_SIZE;
@@ -276,6 +369,47 @@ export class ParticleField {
       arr[i * 6 + 5] = wz + _relVel.z;
     }
     posAttr.needsUpdate = true;
+
+    // Update Hyperspace Tunnel streaking star-lines during countdown
+    if (warpBoost > 0.01) {
+      this.hyperspaceLines.visible = true;
+      this.hyperspaceLines.position.copy(shipPos);
+      this.hyperspaceLines.quaternion.setFromUnitVectors(_negZ, shipForward);
+      this.tunnelMat.opacity = Math.min(0.95, 0.25 + warpBoost * 0.72);
+      this.tunnelMat.color.setHex(warpBoost > 0.7 ? 0xf0f9ff : 0x7dd3fc);
+
+      const tAttr = this.hyperspaceLines.geometry.attributes.position as THREE.BufferAttribute;
+      const tArr = tAttr.array as Float32Array;
+      const tunnelSpeed = 160 + warpBoost * warpBoost * 980;
+      const lineLen = 10 + warpBoost * 92;
+
+      for (let i = 0; i < HYPERSPACE_LINE_COUNT; i++) {
+        const r = this.tunnelSeeds[i * 4];
+        const ang = this.tunnelSeeds[i * 4 + 1];
+        let z = this.tunnelSeeds[i * 4 + 2];
+        const sMult = this.tunnelSeeds[i * 4 + 3];
+
+        z += tunnelSpeed * sMult * dt;
+        if (z > 24) {
+          z -= HYPERSPACE_DEPTH;
+        }
+        this.tunnelSeeds[i * 4 + 2] = z;
+
+        const radScale = 1 - warpBoost * 0.18;
+        const x = Math.cos(ang) * r * radScale;
+        const y = Math.sin(ang) * r * radScale;
+
+        tArr[i * 6] = x;
+        tArr[i * 6 + 1] = y;
+        tArr[i * 6 + 2] = z;
+        tArr[i * 6 + 3] = x * 1.03;
+        tArr[i * 6 + 4] = y * 1.03;
+        tArr[i * 6 + 5] = z - lineLen * sMult;
+      }
+      tAttr.needsUpdate = true;
+    } else {
+      this.hyperspaceLines.visible = false;
+    }
 
     // Update pooled burst particles
     let anyBurstChanged = false;

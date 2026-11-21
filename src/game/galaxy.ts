@@ -1,3 +1,4 @@
+import { deriveSystemSecurityLevel } from './combat';
 import type { EconomyType, StarSystem } from './types';
 
 export const MAX_JUMP_RANGE_LY = 7.0;
@@ -75,6 +76,52 @@ export function canJumpToSystem(
   return { ok: true, distance: dist };
 }
 
+export function hasReachableNeighbor(
+  current: StarSystem,
+  systems: StarSystem[],
+  fuelLY: number,
+  maxRangeLY = MAX_JUMP_RANGE_LY
+): boolean {
+  return systems.some((s) => canJumpToSystem(current, s, fuelLY, maxRangeLY).ok);
+}
+
+export function findDistressRescueSystem(
+  current: StarSystem,
+  systems: StarSystem[],
+  maxRangeLY = MAX_JUMP_RANGE_LY
+): { system: StarSystem; distance: number } | null {
+  const candidates = systems
+    .filter((s) => s.id !== current.id)
+    .map((s) => ({
+      system: s,
+      distance: Math.round(distanceLY(current, s) * 10) / 10,
+    }))
+    .filter((entry) => entry.distance <= maxRangeLY);
+
+  if (candidates.length === 0) {
+    const anyNeighbor = systems
+      .filter((s) => s.id !== current.id)
+      .map((s) => ({
+        system: s,
+        distance: Math.round(distanceLY(current, s) * 10) / 10,
+      }))
+      .sort((a, b) => a.distance - b.distance);
+    return anyNeighbor[0] ?? null;
+  }
+
+  // Prefer a nearby low-tech / frontier agricultural or industrial world within range
+  const lowTech = candidates
+    .filter((c) => c.system.techLevel <= 6 || c.system.economy.startsWith('Poor'))
+    .sort((a, b) => a.distance - b.distance);
+
+  if (lowTech.length > 0) {
+    return lowTech[0];
+  }
+
+  candidates.sort((a, b) => a.distance - b.distance);
+  return candidates[0];
+}
+
 export function generateGalaxySector(seed = 1984): StarSystem[] {
   const rand = mulberry32(seed);
   const systems: StarSystem[] = [];
@@ -141,6 +188,7 @@ export function generateGalaxySector(seed = 1984): StarSystem[] {
       sunCssColor: sun.css,
       techLevel: Math.min(12, Math.max(1, techLevel)),
       economy,
+      securityLevel: deriveSystemSecurityLevel(economy, Math.min(12, Math.max(1, techLevel))),
       inhabitants: INHABITANTS[i % INHABITANTS.length],
     });
   }
